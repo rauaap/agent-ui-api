@@ -176,6 +176,7 @@ class Client:
         name: str | None = None,
         auto_approve_write: bool | None = None,
         auto_approve_command: bool | None = None,
+        auto_approve_inter_agent_communication: bool | None = None,
         sandbox: bool | None = None,
         archived: bool | None = None,
     ) -> dict[str, Any]:
@@ -186,6 +187,9 @@ class Client:
                 name=name,
                 auto_approve_write=auto_approve_write,
                 auto_approve_command=auto_approve_command,
+                auto_approve_inter_agent_communication=(
+                    auto_approve_inter_agent_communication
+                ),
                 sandbox=sandbox,
                 archived=archived,
             ),
