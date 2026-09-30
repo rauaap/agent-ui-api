@@ -18,15 +18,17 @@ class Model(TypedDict):
     name: str
 
 
-class HarnessModels(TypedDict):
-    """One harness's startup catalog. On discovery failure, models is empty."""
+class Agent(TypedDict):
+    """An agent (harness) with its model catalog, discovered at server startup.
 
+    On discovery failure, ``models`` is empty and ``models_error`` is set.
+    """
+
+    id: str
+    name: str
+    default: bool
     models: list[Model]
-    error: str | None
-
-
-# Keyed by agent (harness) ID, as listed by GET /agents.
-ModelCatalog = dict[str, HarnessModels]
+    models_error: str | None
 
 
 class SessionMessageError(Exception):
@@ -123,12 +125,9 @@ class Client:
         """Read one page of persisted events; no waiting or output aggregation."""
         return self.get_scrollback(session_id, after=after, limit=limit)
 
-    def list_agents(self) -> list[dict[str, Any]]:
+    def list_agents(self) -> list[Agent]:
+        """Read agents and their model catalogs, discovered once at server startup."""
         return self.request("GET", "/agents")
-
-    def list_models(self) -> ModelCatalog:
-        """Read per-harness model catalogs discovered once at server startup."""
-        return self.request("GET", "/models")
 
     def get_usage(self) -> dict[str, Any]:
         return self.request("GET", "/usage")
@@ -188,7 +187,8 @@ class Client:
     ) -> dict[str, Any]:
         """Create a session. ``model`` of None uses the harness default.
 
-        Explicit model IDs must come from ``list_models()[agent]``.
+        Explicit model IDs must come from the selected agent's ``models`` in
+        ``list_agents()``.
         """
         return self.request(
             "POST",
