@@ -96,13 +96,19 @@ session using `start_turn`, subject to the server's busy/archive checks.
 agents = client.list_agents()
 pi = next(agent for agent in agents if agent["id"] == "pi")
 if pi["models_error"] is None and pi["models"]:
+    model = pi["models"][0]
+    levels = model["reasoning_levels"]  # Harness vocabulary; may be empty.
     session = client.create_session(
-        "Review", "/path/to/project", agent="pi", model=pi["models"][0]["id"]
+        "Review",
+        "/path/to/project",
+        agent="pi",
+        model=model["id"],
+        reasoning_level=levels[-1] if levels else None,
     )
 ```
 
 `list_agents` returns an ordered list of
-`{"id", "name", "default", "models": [{"id", "name"}], "models_error"}`
+`{"id", "name", "default", "models": [{"id", "name", "reasoning_levels"}], "models_error"}`
 (typed as `Agent` and `Model`). The server discovers catalogs once at startup;
 there is no refresh. An agent whose discovery failed has empty `models` and a
 `models_error` string; other agents are unaffected. A successful empty catalog
@@ -118,6 +124,26 @@ catalog raises `HTTPError` 400; if that agent's discovery failed, 503.
 Session objects include `model` (string, or `None` for the default and for
 sessions created before model selection). The model cannot be changed after
 creation, so `update_session` has no `model` argument.
+
+## Reasoning levels
+
+Each model's `reasoning_levels` is the harness's own vocabulary in the harness's
+order (for example Pi: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+`max`). An empty list means the model has no reasoning choice. There is no
+default-level field; send levels unchanged.
+
+`create_session` and `start_session` accept `reasoning_level`. `None` omits it,
+so the harness picks its own default. A level requires an explicit `model` and
+must be in that model's `reasoning_levels` (`HTTPError` 400; 503 if the agent's
+discovery failed). `update_session(session_id, reasoning_level=...)` changes it
+from the next turn; the level must be in the session model's list (400
+otherwise). `None` leaves it unchanged; a level cannot be cleared back to the
+default.
+
+Session objects include `reasoning_level` (string, or `None` for the harness
+default; UIs show "Default"). After an update, the server broadcasts
+`{"type": "reasoning_level", "reasoning_level": "..."}` on the session
+WebSocket, which this client does not consume.
 
 ## Transport behavior
 

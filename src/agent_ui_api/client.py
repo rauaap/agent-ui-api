@@ -12,10 +12,15 @@ class SandboxPath(TypedDict):
 
 
 class Model(TypedDict):
-    """A selectable model. ``id`` is opaque; pass it back unchanged."""
+    """A selectable model. ``id`` is opaque; pass it back unchanged.
+
+    ``reasoning_levels`` is the harness's own vocabulary, in its order; empty
+    means the model offers no reasoning choice.
+    """
 
     id: str
     name: str
+    reasoning_levels: list[str]
 
 
 class Agent(TypedDict):
@@ -92,6 +97,7 @@ class Client:
         worktree_id: int | None = None,
         sandbox: bool | None = None,
         model: str | None = None,
+        reasoning_level: str | None = None,
     ) -> dict[str, int]:
         """Create a session under an existing project, then send its first message.
 
@@ -107,6 +113,7 @@ class Client:
             worktree_id=worktree_id,
             sandbox=sandbox,
             model=model,
+            reasoning_level=reasoning_level,
         )
         session_id = session["id"]
         try:
@@ -184,11 +191,14 @@ class Client:
         worktree_id: int | None = None,
         sandbox: bool | None = None,
         model: str | None = None,
+        reasoning_level: str | None = None,
     ) -> dict[str, Any]:
-        """Create a session. ``model`` of None uses the harness default.
+        """Create a session. ``model`` or ``reasoning_level`` of None uses the
+        harness default.
 
         Explicit model IDs must come from the selected agent's ``models`` in
-        ``list_agents()``.
+        ``list_agents()``. A reasoning level requires an explicit model and must
+        be in that model's ``reasoning_levels``.
         """
         return self.request(
             "POST",
@@ -200,6 +210,7 @@ class Client:
                 worktree_id=worktree_id,
                 sandbox=sandbox,
                 model=model,
+                reasoning_level=reasoning_level,
             ),
         )
 
@@ -213,7 +224,12 @@ class Client:
         auto_approve_inter_agent_communication: bool | None = None,
         sandbox: bool | None = None,
         archived: bool | None = None,
+        reasoning_level: str | None = None,
     ) -> dict[str, Any]:
+        """Update a session. A new ``reasoning_level`` applies from the next turn;
+        it must be in the session model's ``reasoning_levels`` and cannot be
+        cleared back to the harness default.
+        """
         return self.request(
             "PATCH",
             f"/sessions/{session_id}",
@@ -226,6 +242,7 @@ class Client:
                 ),
                 sandbox=sandbox,
                 archived=archived,
+                reasoning_level=reasoning_level,
             ),
         )
 
