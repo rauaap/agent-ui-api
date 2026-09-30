@@ -11,6 +11,24 @@ class SandboxPath(TypedDict):
     write: bool
 
 
+class Model(TypedDict):
+    """A selectable model. ``id`` is opaque; pass it back unchanged."""
+
+    id: str
+    name: str
+
+
+class HarnessModels(TypedDict):
+    """One harness's startup catalog. On discovery failure, models is empty."""
+
+    models: list[Model]
+    error: str | None
+
+
+# Keyed by agent (harness) ID, as listed by GET /agents.
+ModelCatalog = dict[str, HarnessModels]
+
+
 class SessionMessageError(Exception):
     """A session was created, but sending its initial message failed.
 
@@ -71,6 +89,7 @@ class Client:
         agent: str | None = None,
         worktree_id: int | None = None,
         sandbox: bool | None = None,
+        model: str | None = None,
     ) -> dict[str, int]:
         """Create a session under an existing project, then send its first message.
 
@@ -80,7 +99,12 @@ class Client:
         acceptance uncertain, so retrying automatically could duplicate it.
         """
         session = self.create_session(
-            name, project_path, agent=agent, worktree_id=worktree_id, sandbox=sandbox
+            name,
+            project_path,
+            agent=agent,
+            worktree_id=worktree_id,
+            sandbox=sandbox,
+            model=model,
         )
         session_id = session["id"]
         try:
@@ -101,6 +125,10 @@ class Client:
 
     def list_agents(self) -> list[dict[str, Any]]:
         return self.request("GET", "/agents")
+
+    def list_models(self) -> ModelCatalog:
+        """Read per-harness model catalogs discovered once at server startup."""
+        return self.request("GET", "/models")
 
     def get_usage(self) -> dict[str, Any]:
         return self.request("GET", "/usage")
@@ -156,7 +184,12 @@ class Client:
         agent: str | None = None,
         worktree_id: int | None = None,
         sandbox: bool | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
+        """Create a session. ``model`` of None uses the harness default.
+
+        Explicit model IDs must come from ``list_models()[agent]``.
+        """
         return self.request(
             "POST",
             "/sessions",
@@ -166,6 +199,7 @@ class Client:
                 agent=agent,
                 worktree_id=worktree_id,
                 sandbox=sandbox,
+                model=model,
             ),
         )
 

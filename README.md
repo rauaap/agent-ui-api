@@ -55,6 +55,7 @@ messages remain subject to server busy/archive checks.
 ## Surface
 
 - Agents: `list_agents`
+- Models: `list_models`
 - Usage: `get_usage`
 - Global sandbox paths: `get_sandbox_paths`, `update_sandbox_paths`
 - Projects: `list_projects`, `create_project`, `update_project`, `delete_project`
@@ -89,6 +90,34 @@ Live session events, WebSocket replay, file trees, approval responses, and
 question answers remain outside this client's scope.
 There is no separate agent-message endpoint: a prompt can be submitted to a
 session using `start_turn`, subject to the server's busy/archive checks.
+
+## Model selection
+
+```python
+catalog = client.list_models()  # ModelCatalog, keyed by agent ID
+pi = catalog["pi"]
+if pi["error"] is None and pi["models"]:
+    session = client.create_session(
+        "Review", "/path/to/project", agent="pi", model=pi["models"][0]["id"]
+    )
+```
+
+`list_models` returns `{agent_id: {"models": [{"id", "name"}], "error"}}`
+(typed as `ModelCatalog`, `HarnessModels`, and `Model`). The server discovers
+catalogs once at startup; there is no refresh. A harness whose discovery failed
+has empty `models` and an `error` string; other harnesses are unaffected.
+Model IDs are opaque; show `name` and send `id` unchanged. Catalogs contain no
+"default" entry. UI clients keep the server's order, preselect the first entry,
+and always send an explicit ID; if discovery failed they show the error and
+block session creation for that harness instead of offering a fallback.
+
+`create_session` and `start_session` accept `model`. `None` (the default) omits
+it, so the server uses the harness default; this remains for compatibility and
+may become unsupported if the server makes `model` required. An ID not in the
+selected agent's catalog raises `HTTPError` 400; if that harness's discovery failed, 503.
+Session objects include `model` (string, or `None` for the default and for
+sessions created before model selection). The model cannot be changed after
+creation, so `update_session` has no `model` argument.
 
 ## Transport behavior
 

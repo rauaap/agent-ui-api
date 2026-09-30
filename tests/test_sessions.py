@@ -37,6 +37,7 @@ class SessionTests(unittest.TestCase):
                 agent="pi",
                 worktree_id=2,
                 sandbox=False,
+                model="openai-codex/gpt-5.5",
             )
             self.assertEqual(result, {"session_id": 7, "message_id": 123})
             self.assertEqual(
@@ -51,6 +52,7 @@ class SessionTests(unittest.TestCase):
                             "agent": "pi",
                             "worktree_id": 2,
                             "sandbox": False,
+                            "model": "openai-codex/gpt-5.5",
                         },
                     ),
                     call("POST", "/sessions/7/turn", body={"prompt": "hello"}),

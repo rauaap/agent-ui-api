@@ -150,6 +150,7 @@ class ClientTests(unittest.TestCase):
     def test_all_routes(self):
         cases = [
             ("list_agents", (), {}, "GET", "/agents", None, None),
+            ("list_models", (), {}, "GET", "/models", None, None),
             ("get_usage", (), {}, "GET", "/usage", None, None),
             ("get_sandbox_paths", (), {}, "GET", "/sandbox-paths", None, None),
             (
@@ -194,7 +195,12 @@ class ClientTests(unittest.TestCase):
             (
                 "create_session",
                 ("name", "/p"),
-                {"agent": "pi", "worktree_id": 2, "sandbox": False},
+                {
+                    "agent": "pi",
+                    "worktree_id": 2,
+                    "sandbox": False,
+                    "model": "openai-codex/gpt-5.5",
+                },
                 "POST",
                 "/sessions",
                 {
@@ -203,7 +209,17 @@ class ClientTests(unittest.TestCase):
                     "agent": "pi",
                     "worktree_id": 2,
                     "sandbox": False,
+                    "model": "openai-codex/gpt-5.5",
                 },
+                None,
+            ),
+            (
+                "create_session",
+                ("name", "/p"),
+                {"model": None},
+                "POST",
+                "/sessions",
+                {"name": "name", "project_path": "/p"},
                 None,
             ),
             (
@@ -354,6 +370,17 @@ class ClientTests(unittest.TestCase):
                 },
             ):
                 self.assertEqual(method(7, "hello")["message_id"], 123)
+
+    def test_list_models_returns_catalog_unchanged(self):
+        catalog = {
+            "claude-code": {
+                "models": [{"id": "claude-opus-5-5", "name": "Opus 5.5"}],
+                "error": None,
+            },
+            "pi": {"models": [], "error": "discovery timed out"},
+        }
+        with patch("agent_ui_api.client.request", return_value=catalog):
+            self.assertIs(Client("http://server", "secret").list_models(), catalog)
 
     def test_token_not_in_repr(self):
         self.assertNotIn("secret", repr(Client("http://server", "secret")))
