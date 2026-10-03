@@ -11,6 +11,25 @@ class SandboxPath(TypedDict):
     write: bool
 
 
+class SandboxNetworkDestination(TypedDict):
+    """An exact unicast IPv4 literal and TCP port (1–65535)."""
+
+    ip: str
+    port: int
+
+
+class SandboxNetworkUpdate(TypedDict):
+    """Required replacement list; an empty list clears all exceptions."""
+
+    sandbox_network_allowlist: list[SandboxNetworkDestination]
+
+
+class SandboxNetworkSettings(TypedDict):
+    """Server-wide settings, with duplicates collapsed by the server."""
+
+    sandbox_network_allowlist: list[SandboxNetworkDestination]
+
+
 class Model(TypedDict):
     """A selectable model. ``id`` is opaque; pass it back unchanged.
 
@@ -146,6 +165,23 @@ class Client:
         return self.request(
             "PATCH", "/sandbox-paths", body={"sandbox_paths": sandbox_paths}
         )
+
+    def get_sandbox_network(self) -> SandboxNetworkSettings:
+        """Read server-wide TCP exceptions, not project/session settings."""
+        return self.request("GET", "/sandbox-network")
+
+    def update_sandbox_network(
+        self, sandbox_network_allowlist: list[SandboxNetworkDestination]
+    ) -> SandboxNetworkSettings:
+        """Replace all exceptions; [] clears them. Return the server's list.
+
+        Validation and deduplication belong to the server. Changes apply only
+        to newly launched sandboxed turns; no WebSocket event is emitted.
+        """
+        body: SandboxNetworkUpdate = {
+            "sandbox_network_allowlist": sandbox_network_allowlist
+        }
+        return self.request("PATCH", "/sandbox-network", body=body)
 
     def list_projects(self) -> list[dict[str, Any]]:
         return self.request("GET", "/projects")

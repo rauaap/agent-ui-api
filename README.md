@@ -57,6 +57,7 @@ messages remain subject to server busy/archive checks.
 - Agents and model catalogs: `list_agents`
 - Usage: `get_usage`
 - Global sandbox paths: `get_sandbox_paths`, `update_sandbox_paths`
+- Global sandbox TCP exceptions: `get_sandbox_network`, `update_sandbox_network`
 - Projects: `list_projects`, `create_project`, `update_project`, `delete_project`
 - Sessions: `list_sessions`, `create_session`, `update_session`, `delete_session`,
   `detach_session_worktree`, `stop_session`, `start_turn`, `start_bash`,
@@ -144,6 +145,37 @@ Session objects include `reasoning_level` (string, or `None` for the harness
 default; UIs show "Default"). After an update, the server broadcasts
 `{"type": "reasoning_level", "reasoning_level": "..."}` on the session
 WebSocket, which this client does not consume.
+
+## Sandbox network exceptions
+
+```python
+settings = client.get_sandbox_network()
+settings = client.update_sandbox_network([
+    {"ip": "100.64.0.10", "port": 443},
+    {"ip": "100.64.0.10", "port": 22},
+])
+# Use the server's returned list after saving.
+allowlist = settings["sandbox_network_allowlist"]
+client.update_sandbox_network([])  # Clear all exceptions.
+```
+
+`GET /sandbox-network` and `PATCH /sandbox-network` return
+`{"sandbox_network_allowlist": [{"ip": "100.64.0.10", "port": 443}]}`
+(`SandboxNetworkSettings`). PATCH sends a required replacement array
+(`SandboxNetworkUpdate`); entries are typed as `SandboxNetworkDestination`.
+Duplicates collapse in first-occurrence order on the server, not in the client.
+
+Only exact unicast IPv4 literals and integer TCP ports 1–65535 are accepted:
+no hostnames, CIDRs, IPv6, loopback, unspecified, reserved, multicast, or
+`169.254.0.53` (the sandbox DNS proxy). Invalid IP/destination returns HTTP 400;
+a missing/malformed array or invalid port returns 422. Invalid updates leave
+settings unchanged; errors propagate as `HTTPError` without retries.
+
+Each entry exposes only that TCP port, not other ports or UDP—even when Gitea
+and agent-ui-server share an IP. The setting is server-wide, never per-project
+or per-session, and uses normal server authentication. Changes apply to newly
+launched sandboxed turns for both agents; running turns keep their rules. No
+WebSocket settings event is emitted. Empty means no private-network exceptions.
 
 ## Transport behavior
 

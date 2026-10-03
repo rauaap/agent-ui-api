@@ -6,7 +6,13 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 
-from agent_ui_api import Client, request
+from agent_ui_api import (
+    Client,
+    SandboxNetworkDestination,
+    SandboxNetworkSettings,
+    SandboxNetworkUpdate,
+    request,
+)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -159,6 +165,25 @@ class ClientTests(unittest.TestCase):
                 "PATCH",
                 "/sandbox-paths",
                 {"sandbox_paths": []},
+                None,
+            ),
+            ("get_sandbox_network", (), {}, "GET", "/sandbox-network", None, None),
+            (
+                "update_sandbox_network",
+                ([],),
+                {},
+                "PATCH",
+                "/sandbox-network",
+                {"sandbox_network_allowlist": []},
+                None,
+            ),
+            (
+                "update_sandbox_network",
+                ([{"ip": "100.64.0.10", "port": 443}],),
+                {},
+                "PATCH",
+                "/sandbox-network",
+                {"sandbox_network_allowlist": [{"ip": "100.64.0.10", "port": 443}]},
                 None,
             ),
             ("list_projects", (), {}, "GET", "/projects", None, None),
@@ -396,6 +421,44 @@ class ClientTests(unittest.TestCase):
         ]
         with patch("agent_ui_api.client.request", return_value=agents):
             self.assertIs(Client("http://server", "secret").list_agents(), agents)
+
+    def test_sandbox_network_models_require_all_fields(self):
+        self.assertEqual(SandboxNetworkDestination.__required_keys__, {"ip", "port"})
+        for model in (SandboxNetworkUpdate, SandboxNetworkSettings):
+            self.assertEqual(model.__required_keys__, {"sandbox_network_allowlist"})
+
+    def test_sandbox_network_returns_server_settings_without_normalization(self):
+        client = Client("http://server", "secret")
+        destination = {"ip": "100.64.0.10", "port": 443}
+        submitted = [destination, destination, {"ip": "100.64.0.10", "port": 22}]
+        settings = {"sandbox_network_allowlist": [submitted[0], submitted[2]]}
+        with patch("agent_ui_api.client.request", return_value=settings) as transport:
+            self.assertIs(client.get_sandbox_network(), settings)
+            self.assertIs(client.update_sandbox_network(submitted), settings)
+            self.assertEqual(
+                transport.call_args.kwargs["body"],
+                {"sandbox_network_allowlist": submitted},
+            )
+            self.assertEqual(len(submitted), 3)
+        with self.assertRaises(TypeError):
+            client.update_sandbox_network()
+
+    def test_sandbox_network_errors_propagate_without_retry(self):
+        client = Client("http://server", "secret")
+        for status in (400, 401, 422):
+            error = HTTPError("http://server/sandbox-network", status, "invalid", {}, None)
+            for method, args in (
+                (client.get_sandbox_network, ()),
+                (client.update_sandbox_network, ([{"ip": "bad", "port": 0}],)),
+            ):
+                with (
+                    self.subTest(status=status, method=method.__name__),
+                    patch("agent_ui_api.client.request", side_effect=error) as transport,
+                    self.assertRaises(HTTPError) as caught,
+                ):
+                    method(*args)
+                self.assertIs(caught.exception, error)
+                transport.assert_called_once()
 
     def test_token_not_in_repr(self):
         self.assertNotIn("secret", repr(Client("http://server", "secret")))
