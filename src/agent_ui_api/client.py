@@ -1,9 +1,46 @@
 """One-to-one wrappers for the server's REST routes."""
 
 from dataclasses import dataclass, field
-from typing import Any, TypedDict
+from enum import Enum
+from typing import Any, NotRequired, TypedDict
+from urllib.parse import quote
 
 from .request import request
+
+
+class SharedAssetRoot(TypedDict):
+    """Registered server directory; ``url`` is server-relative, not absolute."""
+
+    asset_root: str
+    path: str
+    project_id: int | None
+    url: str
+
+
+class SharedAssetRootCreate(TypedDict):
+    asset_root: str
+    path: str
+    project_id: NotRequired[int | None]
+
+
+class SharedAssetRootUpdate(TypedDict, total=False):
+    """Omitted fields stay unchanged; project_id=None makes a root global."""
+
+    asset_root: str
+    path: str
+    project_id: int | None
+
+
+class _Unset(Enum):
+    VALUE = 0
+
+
+def _project_id_fields(project_id: int | None | _Unset) -> dict[str, Any]:
+    if project_id is _Unset.VALUE:
+        return {}
+    if project_id is not None and type(project_id) is not int:
+        raise TypeError("project_id must be an integer or None")
+    return {"project_id": project_id}
 
 
 class SandboxPath(TypedDict):
@@ -77,7 +114,8 @@ class Client:
     """Synchronous client. Credentials are supplied by the caller, never loaded.
 
     Responses are the server's decoded JSON, without domain-model conversion.
-    Optional fields set to None are omitted, leaving defaults to the server.
+    Optional fields set to None are omitted, leaving defaults to the server,
+    except shared-asset project_id: explicit None makes the root global.
     """
 
     base_url: str
@@ -182,6 +220,51 @@ class Client:
             "sandbox_network_allowlist": sandbox_network_allowlist
         }
         return self.request("PATCH", "/sandbox-network", body=body)
+
+    def list_shared_asset_roots(self) -> list[SharedAssetRoot]:
+        return self.request("GET", "/shared-asset-roots")
+
+    def create_shared_asset_root(
+        self,
+        asset_root: str,
+        path: str,
+        *,
+        project_id: int | None | _Unset = _Unset.VALUE,
+    ) -> SharedAssetRoot:
+        """Register a directory without creating it. Omitted project_id is global."""
+        return self.request(
+            "POST",
+            "/shared-asset-roots",
+            body={"asset_root": asset_root, "path": path, **_project_id_fields(project_id)},
+        )
+
+    def update_shared_asset_root(
+        self,
+        asset_root: str,
+        *,
+        new_asset_root: str | None = None,
+        path: str | None = None,
+        project_id: int | None | _Unset = _Unset.VALUE,
+    ) -> SharedAssetRoot:
+        """PATCH a root, optionally renaming it (which breaks old links).
+
+        None omits name/path. Omitted project_id stays unchanged; explicit None
+        makes it global. Integer IDs are sent without coercion (not bool/float).
+        """
+        return self.request(
+            "PATCH",
+            f"/shared-asset-roots/{quote(asset_root, safe='')}",
+            body={
+                **_provided(asset_root=new_asset_root, path=path),
+                **_project_id_fields(project_id),
+            },
+        )
+
+    def delete_shared_asset_root(self, asset_root: str) -> None:
+        """Unregister a root, never deleting its files. Returns None (HTTP 204)."""
+        return self.request(
+            "DELETE", f"/shared-asset-roots/{quote(asset_root, safe='')}"
+        )
 
     def list_projects(self) -> list[dict[str, Any]]:
         return self.request("GET", "/projects")

@@ -9,6 +9,9 @@ from .client import (
     SandboxNetworkUpdate,
     SandboxPath,
     SessionMessageError,
+    SharedAssetRoot,
+    SharedAssetRootCreate,
+    SharedAssetRootUpdate,
 )
 from .request import request
 
@@ -21,5 +24,8 @@ __all__ = [
     "SandboxNetworkUpdate",
     "SandboxPath",
     "SessionMessageError",
+    "SharedAssetRoot",
+    "SharedAssetRootCreate",
+    "SharedAssetRootUpdate",
     "request",
 ]

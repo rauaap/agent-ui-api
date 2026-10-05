@@ -99,6 +99,23 @@ class TransportTests(unittest.TestCase):
                 self.assertEqual(result["body"], {"prompt": "héllo", "sandbox": False})
         self.assertEqual(self.call("/echo", body={})["body"], {})
 
+    def test_shared_asset_wire_payloads(self):
+        client = Client(self.url, "test-token")
+        created = client.create_shared_asset_root("notes", "/notes", project_id=42)
+        self.assertEqual(created["method"], "POST")
+        self.assertEqual(created["path"], "/shared-asset-roots")
+        self.assertIs(type(created["body"]["project_id"]), int)
+        self.assertEqual(created["authorization"], "Bearer test-token")
+        self.assertNotIn(
+            "project_id", client.update_shared_asset_root("notes")["body"]
+        )
+        updated = client.update_shared_asset_root(
+            "a/b ?#%ü", new_asset_root="research", project_id=None
+        )
+        self.assertEqual(updated["method"], "PATCH")
+        self.assertEqual(updated["path"], "/shared-asset-roots/a%2Fb%20%3F%23%25%C3%BC")
+        self.assertEqual(updated["body"], {"asset_root": "research", "project_id": None})
+
     def test_empty_response(self):
         self.assertIsNone(self.call("/empty"))
 

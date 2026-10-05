@@ -58,6 +58,8 @@ messages remain subject to server busy/archive checks.
 - Usage: `get_usage`
 - Global sandbox paths: `get_sandbox_paths`, `update_sandbox_paths`
 - Global sandbox TCP exceptions: `get_sandbox_network`, `update_sandbox_network`
+- Shared assets: `list_shared_asset_roots`, `create_shared_asset_root`,
+  `update_shared_asset_root`, `delete_shared_asset_root`
 - Projects: `list_projects`, `create_project`, `update_project`, `delete_project`
 - Sessions: `list_sessions`, `create_session`, `update_session`, `delete_session`,
   `detach_session_worktree`, `stop_session`, `start_turn`, `start_bash`,
@@ -176,6 +178,29 @@ and agent-ui-server share an IP. The setting is server-wide, never per-project
 or per-session, and uses normal server authentication. Changes apply to newly
 launched sandboxed turns for both agents; running turns keep their rules. No
 WebSocket settings event is emitted. Empty means no private-network exceptions.
+
+## Shared assets
+
+```python
+root = client.create_shared_asset_root("notes", "/server/notes", project_id=42)
+root = client.update_shared_asset_root("notes", new_asset_root="research")
+root = client.update_shared_asset_root("research", project_id=None)  # Make global.
+client.delete_shared_asset_root("research")  # Unregister; never delete files.
+```
+
+Responses are unchanged `SharedAssetRoot` dictionaries (`asset_root`, `path`,
+`project_id`, `url`); list returns an array and delete returns `None` (204).
+`SharedAssetRootCreate` and `SharedAssetRootUpdate` describe request bodies.
+The server-relative `url` is preserved; clients open it against their configured
+server address, not the local filesystem or UI origin.
+
+Omitting `project_id` on create uses the server's global default. Omitting it on
+update leaves the association unchanged; explicit `None` sends JSON null and
+makes it global. IDs must be Python integers, not booleans, floats, or strings
+(`TypeError` before sending); project existence is validated by the server.
+Update name/path of `None` are omitted. Renaming sends `asset_root` and breaks
+old links; route identifiers are encoded as single URL segments. Registration
+never creates directories. Server errors (404, 409, 422) propagate unchanged.
 
 ## Transport behavior
 
