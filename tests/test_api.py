@@ -8,6 +8,9 @@ from urllib.parse import parse_qs, urlsplit
 
 from agent_ui_api import (
     Client,
+    Project,
+    ProjectCreate,
+    ProjectUpdate,
     SandboxNetworkDestination,
     SandboxNetworkSettings,
     SandboxNetworkUpdate,
@@ -438,6 +441,46 @@ class ClientTests(unittest.TestCase):
         ]
         with patch("agent_ui_api.client.request", return_value=agents):
             self.assertIs(Client("http://server", "secret").list_agents(), agents)
+
+    def test_project_network_models(self):
+        self.assertIn("sandbox_network_allowlist", Project.__required_keys__)
+        for model in (ProjectCreate, ProjectUpdate):
+            self.assertEqual(model.__required_keys__, {"path"})
+            self.assertIn("sandbox_network_allowlist", model.__optional_keys__)
+
+    def test_project_network_payloads_and_unchanged_responses(self):
+        client = Client("http://server", "token")
+        entries = [{"ip": "100.64.0.20", "port": 22}] * 2
+        project = {"path": "/p", "sandbox_network_allowlist": entries[:1]}
+        for method, verb in ((client.create_project, "POST"),
+                             (client.update_project, "PATCH")):
+            for value in (None, [], entries):
+                with self.subTest(verb=verb, value=value), patch.object(
+                    client, "request", return_value=project
+                ) as call:
+                    result = method("/p", sandbox_network_allowlist=value)
+                    self.assertIs(result, project)
+                    body = {"path": "/p"}
+                    if value is not None:
+                        body["sandbox_network_allowlist"] = value
+                    call.assert_called_once_with(verb, "/projects", body=body)
+            with patch.object(client, "request", return_value=project) as call:
+                self.assertIs(method("/p"), project)
+                call.assert_called_once_with(verb, "/projects", body={"path": "/p"})
+        with patch.object(client, "request", return_value=[project]) as call:
+            self.assertEqual(client.list_projects(), [project])
+            call.assert_called_once_with("GET", "/projects")
+
+    def test_project_network_errors_propagate_without_retry(self):
+        client = Client("http://server", "token")
+        for method in (client.create_project, client.update_project):
+            for status in (400, 422):
+                error = HTTPError("http://server/projects", status, "invalid", {}, None)
+                with patch.object(client, "request", side_effect=error) as call:
+                    with self.assertRaises(HTTPError) as caught:
+                        method("/p", sandbox_network_allowlist=[{"ip": "bad", "port": 0}])
+                    self.assertIs(caught.exception, error)
+                    call.assert_called_once()
 
     def test_sandbox_network_models_require_all_fields(self):
         self.assertEqual(SandboxNetworkDestination.__required_keys__, {"ip", "port"})

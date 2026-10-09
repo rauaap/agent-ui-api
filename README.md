@@ -158,7 +158,14 @@ settings = client.update_sandbox_network([
 ])
 # Use the server's returned list after saving.
 allowlist = settings["sandbox_network_allowlist"]
-client.update_sandbox_network([])  # Clear all exceptions.
+client.update_sandbox_network([])  # Clear server-level exceptions only.
+
+project = client.create_project("/server/project", sandbox_network_allowlist=[
+    {"ip": "100.64.0.20", "port": 22},
+])
+project = client.update_project("/server/project", sandbox_network_allowlist=[])
+# [] restores server inheritance; the returned list contains only project entries.
+project_allowlist = project["sandbox_network_allowlist"]
 ```
 
 `GET /sandbox-network` and `PATCH /sandbox-network` return
@@ -174,10 +181,25 @@ a missing/malformed array or invalid port returns 422. Invalid updates leave
 settings unchanged; errors propagate as `HTTPError` without retries.
 
 Each entry exposes only that TCP port, not other ports or UDP—even when Gitea
-and agent-ui-server share an IP. The setting is server-wide, never per-project
-or per-session, and uses normal server authentication. Changes apply to newly
-launched sandboxed turns for both agents; running turns keep their rules. No
-WebSocket settings event is emitted. Empty means no private-network exceptions.
+and agent-ui-server share an IP. `/sandbox-network` edits only the server scope
+and uses normal server authentication. An empty server list means no server-level
+exceptions; project exceptions may still apply.
+
+`list_projects`, `create_project`, and `update_project` return typed `Project`
+dictionaries (a list for `list_projects`). `ProjectCreate` and `ProjectUpdate`
+describe request bodies. Project responses include `sandbox_network_allowlist`
+for the project's own entries, never the effective union. Creation accepts an
+optional list (omitted/`None` uses the server default `[]`); repeated creation
+leaves existing settings unchanged. Update omission/`None` leaves the list
+unchanged, a supplied list replaces it, and `[]` clears project entries back to
+server inheritance. Validation and deduplication match the server scope; the
+client sends entries unchanged and uses the returned list after saving.
+
+Effective runtime exceptions are the deduplicated union of server and project
+entries. Projects cannot remove inherited server exceptions. Worktree sessions
+inherit their parent project's entries; there is no per-session list. Changes
+apply to newly launched sandboxed turns for both agents; running turns keep
+their rules. No WebSocket settings event is emitted.
 
 ## Shared assets
 

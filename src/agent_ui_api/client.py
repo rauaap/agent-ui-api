@@ -67,6 +67,38 @@ class SandboxNetworkSettings(TypedDict):
     sandbox_network_allowlist: list[SandboxNetworkDestination]
 
 
+class Project(TypedDict):
+    """Project settings; network entries are its own, not the effective union."""
+
+    id: int
+    path: str
+    name: str
+    archived_at: str | None
+    session_count: int
+    archived_session_count: int
+    last_active_at: str | None
+    sandbox_paths: list[SandboxPath]
+    sandbox_network_allowlist: list[SandboxNetworkDestination]
+
+
+class ProjectCreate(TypedDict):
+    """New project settings; repeated creation leaves existing settings unchanged."""
+
+    path: str
+    name: NotRequired[str]
+    sandbox_paths: NotRequired[list[SandboxPath]]
+    sandbox_network_allowlist: NotRequired[list[SandboxNetworkDestination]]
+
+
+class ProjectUpdate(TypedDict):
+    """Omitted settings stay unchanged; [] restores server network inheritance."""
+
+    path: str
+    archived: NotRequired[bool]
+    sandbox_paths: NotRequired[list[SandboxPath]]
+    sandbox_network_allowlist: NotRequired[list[SandboxNetworkDestination]]
+
+
 class Model(TypedDict):
     """A selectable model. ``id`` is opaque; pass it back unchanged.
 
@@ -211,7 +243,7 @@ class Client:
     def update_sandbox_network(
         self, sandbox_network_allowlist: list[SandboxNetworkDestination]
     ) -> SandboxNetworkSettings:
-        """Replace all exceptions; [] clears them. Return the server's list.
+        """Replace server exceptions; [] clears that scope. Return the server's list.
 
         Validation and deduplication belong to the server. Changes apply only
         to newly launched sandboxed turns; no WebSocket event is emitted.
@@ -266,7 +298,7 @@ class Client:
             "DELETE", f"/shared-asset-roots/{quote(asset_root, safe='')}"
         )
 
-    def list_projects(self) -> list[dict[str, Any]]:
+    def list_projects(self) -> list[Project]:
         return self.request("GET", "/projects")
 
     def create_project(
@@ -275,11 +307,22 @@ class Client:
         *,
         name: str | None = None,
         sandbox_paths: list[SandboxPath] | None = None,
-    ) -> dict[str, Any]:
+        sandbox_network_allowlist: list[SandboxNetworkDestination] | None = None,
+    ) -> Project:
+        """Create a project; existing projects keep their settings.
+
+        None omits the network list (server default []); supplied entries are
+        project-only and validated/deduplicated by the server.
+        """
         return self.request(
             "POST",
             "/projects",
-            body=_provided(path=path, name=name, sandbox_paths=sandbox_paths),
+            body=_provided(
+                path=path,
+                name=name,
+                sandbox_paths=sandbox_paths,
+                sandbox_network_allowlist=sandbox_network_allowlist,
+            ),
         )
 
     def update_project(
@@ -288,11 +331,22 @@ class Client:
         *,
         archived: bool | None = None,
         sandbox_paths: list[SandboxPath] | None = None,
-    ) -> dict[str, Any]:
+        sandbox_network_allowlist: list[SandboxNetworkDestination] | None = None,
+    ) -> Project:
+        """Replace supplied project settings; None leaves them unchanged.
+
+        [] clears project network entries, retaining inherited server entries.
+        Responses contain only the project's own list, not the effective union.
+        """
         return self.request(
             "PATCH",
             "/projects",
-            body=_provided(path=path, archived=archived, sandbox_paths=sandbox_paths),
+            body=_provided(
+                path=path,
+                archived=archived,
+                sandbox_paths=sandbox_paths,
+                sandbox_network_allowlist=sandbox_network_allowlist,
+            ),
         )
 
     def delete_project(self, path: str) -> dict[str, Any]:
