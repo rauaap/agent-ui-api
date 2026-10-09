@@ -22,6 +22,9 @@ def request(
     body: Any = None,
     query: Mapping[str, Any] | None = None,
     timeout: float = 30.0,
+    raw_body: bytes | None = None,
+    content_type: str | None = None,
+    binary_response: bool = False,
 ) -> Any:
     """Send one request and return decoded JSON (None for an empty body).
 
@@ -29,7 +32,19 @@ def request(
     omitted; sequences are encoded as repeated parameters. ``body=None``
     sends no body. HTTPError (including redirects), URLError, timeout, and
     JSON decoding errors propagate unchanged. No retries are performed.
+    ``raw_body`` sends unchanged bytes with ``content_type`` instead of JSON;
+    it cannot be combined with ``body``. ``binary_response`` returns bytes,
+    including b"" for an empty response, without JSON decoding.
     """
+    if raw_body is not None:
+        if body is not None:
+            raise ValueError("body and raw_body are mutually exclusive")
+        if not isinstance(raw_body, bytes):
+            raise TypeError("raw_body must be bytes")
+        if not content_type:
+            raise ValueError("raw_body requires content_type")
+    elif content_type is not None:
+        raise ValueError("content_type requires raw_body")
     base = urlsplit(base_url)
     if (
         base.scheme not in {"http", "https"}
@@ -57,12 +72,19 @@ def request(
         )
         if encoded:
             url += "?" + encoded
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    data = None
-    if body is not None:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/octet-stream" if binary_response else "application/json",
+    }
+    data = raw_body
+    if raw_body is not None:
+        headers["Content-Type"] = content_type
+    elif body is not None:
         data = json.dumps(body, allow_nan=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = Request(url, data=data, headers=headers, method=method.upper())
     with build_opener(_NoRedirects()).open(req, timeout=timeout) as response:
         content = response.read()
+    if binary_response:
+        return content
     return json.loads(content) if content else None

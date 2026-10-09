@@ -55,6 +55,7 @@ messages remain subject to server busy/archive checks.
 ## Surface
 
 - Agents and model catalogs: `list_agents`
+- Images: `upload_image`, `download_image`
 - Usage: `get_usage`
 - Global sandbox paths: `get_sandbox_paths`, `update_sandbox_paths`
 - Global sandbox TCP exceptions: `get_sandbox_network`, `update_sandbox_network`
@@ -93,6 +94,42 @@ question answers remain outside this client's scope.
 There is no separate agent-message endpoint: a prompt can be submitted to a
 session using `start_turn`, subject to the server's busy/archive checks.
 
+## Image attachments
+
+```python
+from pathlib import Path
+
+image = client.upload_image(Path("screenshot.png").read_bytes(), "image/png")
+sent = client.start_turn(session["id"], "Explain this screenshot", images=[image["id"]])
+client.start_turn(session["id"], images=[image["id"]])  # Image-only input.
+original_bytes = client.download_image(image["id"])
+```
+
+`upload_image(data: bytes, mime_type: str)` sends raw bytes to `POST /images`,
+not JSON, base64, or multipart. It returns unchanged `Image` metadata:
+`id`, `mime_type`, `size` (original bytes), `width`, and `height` (original pixels).
+Supported MIME types are JPEG (`image/jpeg`), PNG, GIF, and WebP. The server
+validates content and MIME agreement and enforces 10 MiB per upload (413 for
+oversize, 415 for unsupported MIME, 400 for empty/invalid/mismatched content).
+`download_image(id)` uses authenticated `GET /images/{id}` and returns original
+bytes; unknown IDs return 404. Both use the same URL validation, timeout,
+no-redirect/no-retry behavior and error propagation as JSON requests.
+
+`start_turn(session_id, prompt="", images=None)` uses the existing HTTP turn
+endpoint. It always sends `prompt`; `None` omits `images`, while `[]` sends an
+empty list. `TurnRequest` describes the HTTP body. Meaningful text or images
+are required. IDs are ordered and duplicates are preserved. Server acceptance
+requires an image-capable session model, existing image IDs, at most 10 image
+occurrences per message, and at most 20 MiB of image occurrences in the pending
+turn batch (including repeated IDs and already queued inputs). Rejection does
+not delete uploads; images are immutable and retained, even if unattached.
+
+Accepted input, pending queue, shipment, scrollback and replay payloads contain
+ordered `images` metadata objects, never image bytes/base64; text-only messages
+omit the field. Sending uses ID strings, not metadata objects. WebSocket UIs
+continue using their existing input operation with optional `images` IDs; this
+client does not implement WebSocket transport or events.
+
 ## Model selection
 
 ```python
@@ -111,12 +148,13 @@ if pi["models_error"] is None and pi["models"]:
 ```
 
 `list_agents` returns an ordered list of
-`{"id", "name", "default", "models": [{"id", "name", "reasoning_levels"}], "models_error"}`
+`{"id", "name", "default", "models": [{"id", "name", "reasoning_levels", "input"}], "models_error"}`
 (typed as `Agent` and `Model`). The server discovers catalogs once at startup;
 there is no refresh. An agent whose discovery failed has empty `models` and a
 `models_error` string; other agents are unaffected. A successful empty catalog
 has `models_error` of `None`. Model IDs are opaque; show `name` and send `id`
-unchanged. Catalogs contain no "default" entry. UI clients keep the server's
+unchanged. Each model has required `input: list[str]`; attachments are supported
+when `"image" in model["input"]`. Catalogs contain no "default" entry. UI clients keep the server's
 order, preselect the first entry, and always send an explicit ID; if discovery
 failed they show the error and block session creation for that agent instead of
 offering a fallback.
@@ -229,7 +267,9 @@ never creates directories. Server errors (404, 409, 422) propagate unchanged.
 ## Transport behavior
 
 - Sends `Authorization: Bearer <token>`; no token loading or persistence.
-- Encodes JSON bodies and query parameters; an empty response returns `None`.
+- Encodes JSON bodies and query parameters; an empty JSON response returns `None`.
+  Raw transport options `raw_body`/`content_type` send bytes instead of JSON;
+  `binary_response=True` returns bytes (including `b""`), without JSON decoding.
 - Uses a 30-second socket timeout by default (configurable with `timeout`).
 - Propagates `urllib.error.HTTPError` and `URLError`, timeout exceptions, and
   JSON decoding errors. `HTTPError.code`, `.headers`, and `.read()` retain the

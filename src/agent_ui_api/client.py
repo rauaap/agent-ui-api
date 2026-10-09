@@ -99,16 +99,35 @@ class ProjectUpdate(TypedDict):
     sandbox_network_allowlist: NotRequired[list[SandboxNetworkDestination]]
 
 
+class Image(TypedDict):
+    """Immutable uploaded image metadata; never includes bytes or storage paths."""
+
+    id: str
+    mime_type: str
+    size: int
+    width: int
+    height: int
+
+
+class TurnRequest(TypedDict, total=False):
+    """HTTP turn input. Meaningful prompt or at least one image ID is required."""
+
+    prompt: str
+    images: list[str]
+
+
 class Model(TypedDict):
     """A selectable model. ``id`` is opaque; pass it back unchanged.
 
     ``reasoning_levels`` is the harness's own vocabulary, in its order; empty
-    means the model offers no reasoning choice.
+    means the model offers no reasoning choice. ``input`` lists supported
+    input types; image attachments require ``"image" in input``.
     """
 
     id: str
     name: str
     reasoning_levels: list[str]
+    input: list[str]
 
 
 class Agent(TypedDict):
@@ -448,10 +467,42 @@ class Client:
             query=_provided(after=after, limit=limit),
         )
 
-    def start_turn(self, session_id: int, prompt: str) -> dict[str, Any]:
-        """Submit a prompt; acceptance does not mean the turn has completed."""
+    def upload_image(self, data: bytes, mime_type: str) -> Image:
+        """Upload original binary bytes; validation and limits belong to the server."""
+        return request(
+            self.base_url,
+            "POST",
+            "/images",
+            token=self.token,
+            raw_body=data,
+            content_type=mime_type,
+            timeout=self.timeout,
+        )
+
+    def download_image(self, image_id: str) -> bytes:
+        """Retrieve original bytes with authentication, without JSON decoding."""
+        return request(
+            self.base_url,
+            "GET",
+            f"/images/{quote(image_id, safe='')}",
+            token=self.token,
+            binary_response=True,
+            timeout=self.timeout,
+        )
+
+    def start_turn(
+        self, session_id: int, prompt: str = "", *, images: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Submit text and/or ordered image IDs; return acceptance, not completion.
+
+        Omitted prompt sends an empty string. None omits images; [] is sent.
+        Server validation requires meaningful text or at least one image.
+        Repeated IDs remain repeated occurrences, in the supplied order.
+        """
         return self.request(
-            "POST", f"/sessions/{session_id}/turn", body={"prompt": prompt}
+            "POST",
+            f"/sessions/{session_id}/turn",
+            body={"prompt": prompt, **_provided(images=images)},
         )
 
     def start_bash(self, session_id: int, command: str) -> dict[str, Any]:

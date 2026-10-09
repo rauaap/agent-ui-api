@@ -3,6 +3,7 @@
 from .client import (
     Agent,
     Client,
+    Image,
     Model,
     Project,
     ProjectCreate,
@@ -15,12 +16,14 @@ from .client import (
     SharedAssetRoot,
     SharedAssetRootCreate,
     SharedAssetRootUpdate,
+    TurnRequest,
 )
 from .request import request
 
 __all__ = [
     "Agent",
     "Client",
+    "Image",
     "Model",
     "Project",
     "ProjectCreate",
@@ -33,5 +36,6 @@ __all__ = [
     "SharedAssetRoot",
     "SharedAssetRootCreate",
     "SharedAssetRootUpdate",
+    "TurnRequest",
     "request",
 ]
