@@ -122,11 +122,12 @@ failed they show the error and block session creation for that agent instead of
 offering a fallback.
 
 `create_session` and `start_session` accept `model`. `None` (the default) omits
-it, so the server uses the harness default. An ID not in the selected agent's
-catalog raises `HTTPError` 400; if that agent's discovery failed, 503.
-Session objects include `model` (string, or `None` for the default and for
-sessions created before model selection). The model cannot be changed after
-creation, so `update_session` has no `model` argument.
+it, so the server selects the first entry of the selected agent's catalog and
+persists its ID. An ID not in that catalog raises `HTTPError` 400; discovery
+failure returns 503. Omitted model also returns 503 if the catalog is empty.
+New session objects include the selected `model` string; older sessions may
+have `None`. The model cannot be changed after creation, so `update_session`
+has no `model` argument.
 
 ## Reasoning levels
 
@@ -136,9 +137,10 @@ order (for example Pi: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
 default-level field; send levels unchanged.
 
 `create_session` and `start_session` accept `reasoning_level`. `None` omits it,
-so the harness picks its own default. A level requires an explicit `model` and
-must be in that model's `reasoning_levels` (`HTTPError` 400; 503 if the agent's
-discovery failed). `update_session(session_id, reasoning_level=...)` changes it
+so the harness picks its own default level. A supplied level must be in the
+selected model's `reasoning_levels`, including when `model` is omitted and the
+first catalog entry is selected (`HTTPError` 400; 503 if model discovery is
+unavailable). `update_session(session_id, reasoning_level=...)` changes it
 from the next turn; the level must be in the session model's list (400
 otherwise). `None` leaves it unchanged; a level cannot be cleared back to the
 default.

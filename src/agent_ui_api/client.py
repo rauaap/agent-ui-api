@@ -366,12 +366,13 @@ class Client:
         model: str | None = None,
         reasoning_level: str | None = None,
     ) -> dict[str, Any]:
-        """Create a session. ``model`` or ``reasoning_level`` of None uses the
-        harness default.
+        """Create a session. ``model=None`` selects the first catalog entry;
+        the server persists its ID. ``reasoning_level=None`` uses the harness's
+        default reasoning level.
 
         Explicit model IDs must come from the selected agent's ``models`` in
-        ``list_agents()``. A reasoning level requires an explicit model and must
-        be in that model's ``reasoning_levels``.
+        ``list_agents()``. A supplied reasoning level must be in the selected
+        model's ``reasoning_levels``, even when ``model`` is omitted.
         """
         return self.request(
             "POST",
