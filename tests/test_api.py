@@ -382,6 +382,7 @@ class ClientTests(unittest.TestCase):
                     "messages": messages,
                     "next_cursor": messages[-1]["id"] if messages else after,
                     "has_more": bool(messages),
+                    "queued_messages": [],
                 }
                 with (
                     self.subTest(after=after, messages=messages),
@@ -406,6 +407,75 @@ class ClientTests(unittest.TestCase):
                         query=query,
                         timeout=30.0,
                     )
+
+    def test_get_scrollback_before_returns_page_unchanged(self):
+        client = Client("http://server", "secret")
+        messages = [
+            {
+                "id": event_id,
+                "session_id": 7,
+                "ts": "2026-01-01T00:00:00Z",
+                "type": "output",
+                "payload": {"text": "hi"},
+            }
+            for event_id in (10, 23)
+        ]
+        for before, limit, rows, has_more in (
+            (30, 200, messages, True),
+            (30, 1000, messages, False),
+            (10, 200, [], False),
+            (0, 1, [], False),
+        ):
+            page = {
+                "messages": rows,
+                "next_cursor": rows[0]["id"] if rows else before,
+                "has_more": has_more,
+                "queued_messages": [{"message_id": 40, "text": "pending"}],
+            }
+            with (
+                self.subTest(before=before, limit=limit, has_more=has_more),
+                patch.object(client, "request", return_value=page) as transport,
+            ):
+                self.assertIs(client.get_scrollback(7, before=before, limit=limit), page)
+                transport.assert_called_once_with(
+                    "GET",
+                    "/sessions/7/scrollback",
+                    query={"before": before, "limit": limit},
+                )
+
+    def test_get_scrollback_validation_errors_belong_to_server(self):
+        client = Client("http://server", "secret")
+        for kwargs in (
+            {"after": 0, "before": 0},
+            {"before": -1},
+            {"before": 1, "limit": 0},
+            {"before": 1, "limit": 1001},
+        ):
+            error = HTTPError(
+                "http://server/sessions/7/scrollback", 422, "invalid", {}, None
+            )
+            with (
+                self.subTest(kwargs=kwargs),
+                patch.object(client, "request", side_effect=error) as transport,
+                self.assertRaises(HTTPError) as caught,
+            ):
+                client.get_scrollback(7, **kwargs)
+            self.assertIs(caught.exception, error)
+            transport.assert_called_once_with(
+                "GET", "/sessions/7/scrollback", query={"limit": 200, **kwargs}
+            )
+
+    def test_scrollback_types(self):
+        from agent_ui_api import ScrollbackEvent, ScrollbackPage
+
+        self.assertEqual(
+            ScrollbackEvent.__required_keys__,
+            {"id", "session_id", "ts", "type", "payload"},
+        )
+        self.assertEqual(
+            ScrollbackPage.__required_keys__,
+            {"messages", "next_cursor", "has_more", "queued_messages"},
+            )
 
     def test_send_returns_message_id(self):
         client = Client("http://server", "secret")

@@ -45,7 +45,7 @@ message_id = client.message_session(started["session_id"], "Now review the tests
   `message_session`; returns `session_id` and `message_id`. Projects must already
   exist. Creation failures propagate unchanged; messaging failures raise
   `SessionMessageError` carrying the created session ID and original cause.
-- `read_session(session_id, after=None, limit=200)` returns one unchanged
+- `read_session(session_id, after=None, before=None, limit=200)` returns one unchanged
   scrollback page. It does not wait for completion or combine output events.
 
 No automatic retry or deletion occurs on partial success. A messaging timeout
@@ -83,11 +83,50 @@ messages = page["messages"]
 cursor = page["next_cursor"]  # Use as after on the next read.
 ```
 
-`get_scrollback` returns one page of persisted events, ordered by ascending ID,
-strictly after the cursor. Omit `after` to start from the beginning. The server
-accepts limits of 1–1000 (default 200). `has_more` indicates another page is
-available now; false does not mean the agent has finished. Empty pages preserve
-the supplied cursor (or `None`). There is no automatic pagination or polling.
+### Transcript history pagination
+
+`get_scrollback(session_id, after=None, before=None, limit=200)` and
+`read_session` return an unchanged `ScrollbackPage`: `messages`, `next_cursor`,
+`has_more`, and `queued_messages`. Each `ScrollbackEvent` in `messages` has
+`id`, `session_id`, `ts`, `type`, and `payload`. `queued_messages` is the current
+input queue snapshot, not historical data.
+
+- Forward: `after` is exclusive; omit both cursors to start at the beginning.
+  `next_cursor` is the newest returned ID; use it as the next `after`.
+- Backward: `before` is exclusive and selects the nearest older events, still
+  returned in ascending chronological ID order. `next_cursor` is the oldest
+  returned ID; use it as the next `before`. `has_more` means more older events exist.
+- Empty pages preserve the supplied cursor (or `None`). IDs are global across
+  sessions and may have gaps: never subtract a page size from an ID.
+- The server validates cursors as integers >=0 and limits as 1–1000 (default 200).
+  Supplying both `after` and `before` returns HTTP 422. Validation errors propagate
+  unchanged; this client does not add local validation or compatibility behavior.
+
+```python
+page = client.get_scrollback(session["id"], before=oldest_event_id, limit=200)
+# Prepend page["messages"]; if page["has_more"], use page["next_cursor"] as before.
+```
+
+There is no automatic pagination or polling. Forward `has_more` only indicates
+another page is available now; false does not mean the agent has finished.
+
+#### WebSocket / REST event identity
+
+The server initially replays the newest 200 persisted events on the WebSocket.
+Every persisted frame, replayed or live, includes `event_id` equal to its REST
+row `id`; input frames additionally retain `message_id`. Nonpersisted frames
+such as `status`, `input_queue`, `archived`, and `done` have no `event_id`.
+REST rows can be normalized to `{type, ...payload, event_id: id}`, additionally
+setting `message_id: id` for input events.
+
+UI clients retain IDs even for events without a visible transcript item. On
+scrolling to the top, request 200 older events using the oldest loaded event ID,
+prepend/deduplicate by ID in chronological order, and preserve the scroll anchor.
+Allow one history request per session at a time, ignore stale responses after
+session changes, reset paging state on fresh replay/session changes, and stop
+when `has_more` is false. Empty initial replay needs no history fetch. Page sizes
+count persisted events (including fragments, tool events, input delivery, and
+approval/question responses), not visible chat bubbles.
 
 Live session events, WebSocket replay, file trees, approval responses, and
 question answers remain outside this client's scope.

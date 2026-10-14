@@ -95,16 +95,23 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(transport.call_count, 2)
 
     def test_read_session_returns_page_unchanged(self):
-        for after, limit in ((None, 200), (123, 10)):
-            page = {"messages": [], "next_cursor": after, "has_more": False}
+        for after, before, limit in (
+            (None, None, 200), (123, None, 10), (None, 123, 200), (None, 0, 1)
+        ):
+            page = {
+                "messages": [],
+                "next_cursor": before if before is not None else after,
+                "has_more": False,
+                "queued_messages": [],
+            }
             with (
-                self.subTest(after=after),
+                self.subTest(after=after, before=before),
                 patch.object(self.client, "get_scrollback", return_value=page) as read,
             ):
                 self.assertIs(
-                    self.client.read_session(7, after=after, limit=limit), page
+                    self.client.read_session(7, after=after, before=before, limit=limit), page
                 )
-                read.assert_called_once_with(7, after=after, limit=limit)
+                read.assert_called_once_with(7, after=after, before=before, limit=limit)
 
 
 if __name__ == "__main__":

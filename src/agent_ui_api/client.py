@@ -31,6 +31,25 @@ class SharedAssetRootUpdate(TypedDict, total=False):
     project_id: int | None
 
 
+class ScrollbackEvent(TypedDict):
+    """Persisted event; globally allocated IDs may have gaps across sessions."""
+
+    id: int
+    session_id: int
+    ts: str
+    type: str
+    payload: dict[str, Any]
+
+
+class ScrollbackPage(TypedDict):
+    """Chronological events and a directional cursor; queue is a current snapshot."""
+
+    messages: list[ScrollbackEvent]
+    next_cursor: int | None
+    has_more: bool
+    queued_messages: list[dict[str, Any]]
+
+
 class _Unset(Enum):
     VALUE = 0
 
@@ -235,10 +254,14 @@ class Client:
         session_id: int,
         *,
         after: int | None = None,
+        before: int | None = None,
         limit: int = 200,
-    ) -> dict[str, Any]:
-        """Read one page of persisted events; no waiting or output aggregation."""
-        return self.get_scrollback(session_id, after=after, limit=limit)
+    ) -> ScrollbackPage:
+        """Read a scrollback page in either direction; no waiting or aggregation.
+
+        See get_scrollback for cursor semantics and server validation.
+        """
+        return self.get_scrollback(session_id, after=after, before=before, limit=limit)
 
     def list_agents(self) -> list[Agent]:
         """Read agents and their model catalogs, discovered once at server startup."""
@@ -453,18 +476,23 @@ class Client:
         session_id: int,
         *,
         after: int | None = None,
+        before: int | None = None,
         limit: int = 200,
-    ) -> dict[str, Any]:
-        """Read one page of persisted events, oldest first, exclusively after ID.
+    ) -> ScrollbackPage:
+        """Read persisted events in ascending ID order, with exclusive cursors.
 
-        Omit after to start from the beginning. Returns messages, next_cursor,
-        and has_more unchanged. The server validates limit (1–1000).
-        An empty page retains the supplied cursor; it does not imply completion.
+        before selects the nearest older events; next_cursor is their oldest ID
+        and has_more means more older events exist. Otherwise, after selects
+        newer events (omit it to start at the beginning), with the newest ID as
+        next_cursor. Empty pages retain the supplied cursor, or None.
+        queued_messages is the current queue snapshot, not historical data.
+        The server validates nonnegative cursors, their mutual exclusion (422),
+        and limit (1–1000, default 200). No pagination or polling is automatic.
         """
         return self.request(
             "GET",
             f"/sessions/{session_id}/scrollback",
-            query=_provided(after=after, limit=limit),
+            query=_provided(after=after, before=before, limit=limit),
         )
 
     def upload_image(self, data: bytes, mime_type: str) -> Image:
