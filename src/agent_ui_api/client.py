@@ -87,14 +87,16 @@ class SandboxNetworkSettings(TypedDict):
 
 
 class Project(TypedDict):
-    """Project settings; network entries are its own, not the effective union."""
+    """Project settings; counts/activity include all sessions.
+
+    Network entries are its own, not the effective union.
+    """
 
     id: int
     path: str
     name: str
-    archived_at: str | None
+    is_git_repo: bool
     session_count: int
-    archived_session_count: int
     last_active_at: str | None
     sandbox_paths: list[SandboxPath]
     sandbox_network_allowlist: list[SandboxNetworkDestination]
@@ -113,7 +115,6 @@ class ProjectUpdate(TypedDict):
     """Omitted settings stay unchanged; [] restores server network inheritance."""
 
     path: str
-    archived: NotRequired[bool]
     sandbox_paths: NotRequired[list[SandboxPath]]
     sandbox_network_allowlist: NotRequired[list[SandboxNetworkDestination]]
 
@@ -340,6 +341,13 @@ class Client:
             "DELETE", f"/shared-asset-roots/{quote(asset_root, safe='')}"
         )
 
+    def get_directory_existence(self) -> dict[str, bool]:
+        """Fresh server directory snapshot for project/worktree/effective session paths.
+
+        Keys are absolute paths; an absent key is unknown, not False.
+        """
+        return self.request("GET", "/directory-existence")
+
     def list_projects(self) -> list[Project]:
         return self.request("GET", "/projects")
 
@@ -371,7 +379,6 @@ class Client:
         self,
         path: str,
         *,
-        archived: bool | None = None,
         sandbox_paths: list[SandboxPath] | None = None,
         sandbox_network_allowlist: list[SandboxNetworkDestination] | None = None,
     ) -> Project:
@@ -385,7 +392,6 @@ class Client:
             "/projects",
             body=_provided(
                 path=path,
-                archived=archived,
                 sandbox_paths=sandbox_paths,
                 sandbox_network_allowlist=sandbox_network_allowlist,
             ),
@@ -439,7 +445,6 @@ class Client:
         auto_approve_command: bool | None = None,
         auto_approve_inter_agent_communication: bool | None = None,
         sandbox: bool | None = None,
-        archived: bool | None = None,
         reasoning_level: str | None = None,
     ) -> dict[str, Any]:
         """Update a session. A new ``reasoning_level`` applies from the next turn;
@@ -457,13 +462,9 @@ class Client:
                     auto_approve_inter_agent_communication
                 ),
                 sandbox=sandbox,
-                archived=archived,
                 reasoning_level=reasoning_level,
             ),
         )
-
-    def detach_session_worktree(self, session_id: int) -> dict[str, Any]:
-        return self.request("POST", f"/sessions/{session_id}/detach-worktree")
 
     def stop_session(self, session_id: int) -> dict[str, Any]:
         return self.request("POST", f"/sessions/{session_id}/stop")
@@ -554,4 +555,9 @@ class Client:
         )
 
     def delete_worktree(self, worktree_id: int) -> dict[str, Any]:
+        """Safely remove a worktree; preserve sessions and their working directories.
+
+        The server clears attached worktree IDs. Busy-directory and Git safety
+        failures propagate as HTTPError; removal is never forced or retried.
+        """
         return self.request("DELETE", f"/worktrees/{worktree_id}")

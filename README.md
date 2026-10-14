@@ -50,7 +50,7 @@ message_id = client.message_session(started["session_id"], "Now review the tests
 
 No automatic retry or deletion occurs on partial success. A messaging timeout
 can mean acceptance is unknown, not that the message was rejected. Further
-messages remain subject to server busy/archive checks.
+messages remain subject to server busy checks.
 
 ## Surface
 
@@ -63,9 +63,10 @@ messages remain subject to server busy/archive checks.
   `update_shared_asset_root`, `delete_shared_asset_root`
 - Projects: `list_projects`, `create_project`, `update_project`, `delete_project`
 - Sessions: `list_sessions`, `create_session`, `update_session`, `delete_session`,
-  `detach_session_worktree`, `stop_session`, `start_turn`, `start_bash`,
+  `stop_session`, `start_turn`, `start_bash`,
   `get_scrollback`
 - Worktrees: `list_worktrees`, `create_worktree`, `delete_worktree`
+- Directory snapshot: `get_directory_existence`
 - Raw REST: `request` (standalone or on `Client`)
 
 Wrappers return the server's JSON dictionaries/lists directly. Optional arguments
@@ -131,7 +132,35 @@ approval/question responses), not visible chat bubbles.
 Live session events, WebSocket replay, file trees, approval responses, and
 question answers remain outside this client's scope.
 There is no separate agent-message endpoint: a prompt can be submitted to a
-session using `start_turn`, subject to the server's busy/archive checks.
+session using `start_turn`, subject to the server's busy checks.
+
+## Projects, worktrees, and directory existence
+
+Project `session_count` and `last_active_at` include all sessions. Projects retain
+`is_git_repo`; project and worktree responses have no `exists` field. Project and
+session updates have no archive option or explicit worktree-detachment operation.
+
+`get_directory_existence()` returns a fresh server snapshot mapping absolute
+paths to booleans for all projects, managed worktrees, and effective session
+working directories (including former worktrees). It checks directories, not
+Git validity. Fetch catalogs first, then the map, and publish them together.
+An absent path is unknown, not false: refresh again if catalog mutations left a
+path out. Include the map in periodic catalog refreshes; there is no filesystem
+or worktree-detachment WebSocket event.
+
+`delete_worktree(id)` returns `{"status": "deleted"}`. The server preserves
+attached sessions, transcripts, queues, settings, and absolute `working_dir`,
+while clearing `worktree_id`. Idle sessions do not block removal. Busy sessions
+using the directory (including former-worktree sessions), Git listing failures,
+and unsafe Git removal return HTTP 409; unknown IDs return 404. Removal is never
+forced. If the path is no longer Git-registered, only the server record is removed
+and any existing directory remains untouched. Errors propagate without retries.
+
+After deletion, refetch session/worktree catalogs, then directory existence.
+Other clients discover changes through polling. Sessions with missing directories
+remain readable and configurable; execution fails through ordinary errors rather
+than recreating or relocating the directory. Former-worktree association and
+missing-directory state are independent.
 
 ## Image attachments
 

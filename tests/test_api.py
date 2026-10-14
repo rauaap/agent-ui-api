@@ -177,6 +177,7 @@ class ClientTests(unittest.TestCase):
         cases = [
             ("list_agents", (), {}, "GET", "/agents", None, None),
             ("get_usage", (), {}, "GET", "/usage", None, None),
+            ("get_directory_existence", (), {}, "GET", "/directory-existence", None, None),
             ("get_sandbox_paths", (), {}, "GET", "/sandbox-paths", None, None),
             (
                 "update_sandbox_paths",
@@ -211,10 +212,10 @@ class ClientTests(unittest.TestCase):
             (
                 "update_project",
                 ("/p",),
-                {"archived": False, "sandbox_paths": []},
+                {"sandbox_paths": []},
                 "PATCH",
                 "/projects",
-                {"path": "/p", "archived": False, "sandbox_paths": []},
+                {"path": "/p", "sandbox_paths": []},
                 None,
             ),
             (
@@ -277,7 +278,6 @@ class ClientTests(unittest.TestCase):
                     "auto_approve_command": False,
                     "auto_approve_inter_agent_communication": False,
                     "sandbox": True,
-                    "archived": False,
                     "reasoning_level": "max",
                 },
                 "PATCH",
@@ -288,7 +288,6 @@ class ClientTests(unittest.TestCase):
                     "auto_approve_command": False,
                     "auto_approve_inter_agent_communication": False,
                     "sandbox": True,
-                    "archived": False,
                     "reasoning_level": "max",
                 },
                 None,
@@ -300,15 +299,6 @@ class ClientTests(unittest.TestCase):
                 "PATCH",
                 "/sessions/1",
                 {"auto_approve_inter_agent_communication": True},
-                None,
-            ),
-            (
-                "detach_session_worktree",
-                (1,),
-                {},
-                "POST",
-                "/sessions/1/detach-worktree",
-                None,
                 None,
             ),
             ("stop_session", (1,), {}, "POST", "/sessions/1/stop", None, None),
@@ -370,6 +360,42 @@ class ClientTests(unittest.TestCase):
                     query=query,
                     timeout=5,
                 )
+
+    def test_removed_contract_is_not_exposed(self):
+        client = Client("http://server", "secret")
+        with patch.object(client, "request") as call:
+            for method, args in ((client.update_project, ("/p",)),
+                                 (client.update_session, (1,))):
+                with self.subTest(method=method.__name__), self.assertRaises(TypeError):
+                    method(*args, archived=False)
+            call.assert_not_called()
+        self.assertFalse(hasattr(client, "detach_session_worktree"))
+        self.assertIn("is_git_repo", Project.__required_keys__)
+        for key in ("archived_at", "archived_session_count", "sessions_affected", "exists"):
+            self.assertNotIn(key, Project.__annotations__)
+        self.assertNotIn("archived", ProjectUpdate.__annotations__)
+
+    def test_directory_existence_returns_snapshot_unchanged(self):
+        client = Client("http://server", "secret")
+        snapshot = {"/project": True, "/worktree": False, "/former-worktree": False}
+        with patch.object(client, "request", return_value=snapshot) as call:
+            self.assertIs(client.get_directory_existence(), snapshot)
+            call.assert_called_once_with("GET", "/directory-existence")
+        self.assertNotIn("/unknown", snapshot)
+
+    def test_delete_worktree_returns_server_result_without_session_mutation(self):
+        client = Client("http://server", "secret")
+        result = {"status": "deleted"}
+        with patch.object(client, "request", return_value=result) as call:
+            self.assertIs(client.delete_worktree(2), result)
+            call.assert_called_once_with("DELETE", "/worktrees/2")
+        for status in (404, 409):
+            error = HTTPError("http://server/worktrees/2", status, "refused", {}, None)
+            with patch.object(client, "request", side_effect=error) as call:
+                with self.assertRaises(HTTPError) as caught:
+                    client.delete_worktree(2)
+                self.assertIs(caught.exception, error)
+                call.assert_called_once_with("DELETE", "/worktrees/2")
 
     def test_get_scrollback(self):
         client = Client("http://server", "secret")
