@@ -21,10 +21,28 @@ from .client import (
     TurnRequest,
 )
 from .request import request
+from .transcript import (
+    FinalStreamMetadata,
+    OutputPayload,
+    QuestionPayload,
+    StreamDraft,
+    StreamInterruptedPayload,
+    TextDraft,
+    ToolDraft,
+    ToolUsePayload,
+)
 
 __all__ = [
     "Agent",
     "Client",
+    "FinalStreamMetadata",
+    "OutputPayload",
+    "QuestionPayload",
+    "StreamDraft",
+    "StreamInterruptedPayload",
+    "TextDraft",
+    "ToolDraft",
+    "ToolUsePayload",
     "Image",
     "Model",
     "Project",

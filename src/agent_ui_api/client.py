@@ -32,7 +32,11 @@ class SharedAssetRootUpdate(TypedDict, total=False):
 
 
 class ScrollbackEvent(TypedDict):
-    """Persisted event; globally allocated IDs may have gaps across sessions."""
+    """Durable event, including stream_interrupted, never live stream drafts.
+
+    Globally allocated IDs may have gaps across sessions. Known payload shapes
+    are exported from transcript.py; payload stays open for other event kinds.
+    """
 
     id: int
     session_id: int
@@ -260,6 +264,7 @@ class Client:
     ) -> ScrollbackPage:
         """Read a scrollback page in either direction; no waiting or aggregation.
 
+        Includes durable stream_interrupted entries, never active drafts/deltas.
         See get_scrollback for cursor semantics and server validation.
         """
         return self.get_scrollback(session_id, after=after, before=before, limit=limit)
@@ -487,6 +492,8 @@ class Client:
         newer events (omit it to start at the beginning), with the newest ID as
         next_cursor. Empty pages retain the supplied cursor, or None.
         queued_messages is the current queue snapshot, not historical data.
+        Final streaming metadata and stream_interrupted payloads pass through
+        unchanged; transient stream frames/active drafts are never returned.
         The server validates nonnegative cursors, their mutual exclusion (422),
         and limit (1–1000, default 200). No pagination or polling is automatic.
         """

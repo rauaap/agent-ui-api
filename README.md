@@ -46,7 +46,8 @@ message_id = client.message_session(started["session_id"], "Now review the tests
   exist. Creation failures propagate unchanged; messaging failures raise
   `SessionMessageError` carrying the created session ID and original cause.
 - `read_session(session_id, after=None, before=None, limit=200)` returns one unchanged
-  scrollback page. It does not wait for completion or combine output events.
+  durable scrollback page, including interrupted output but never active drafts or
+  token updates. It does not wait for completion or combine output events.
 
 No automatic retry or deletion occurs on partial success. A messaging timeout
 can mean acceptance is unknown, not that the message was rejected. Further
@@ -116,7 +117,9 @@ another page is available now; false does not mean the agent has finished.
 The server initially replays the newest 200 persisted events on the WebSocket.
 Every persisted frame, replayed or live, includes `event_id` equal to its REST
 row `id`; input frames additionally retain `message_id`. Nonpersisted frames
-such as `status`, `input_queue`, `archived`, and `done` have no `event_id`.
+such as `status`, `input_queue`, `archived`, `done`, and transient `stream_*`
+frames (`stream_start`, `stream_delta`, `stream_snapshot`, `stream_remove`) have
+no `event_id`. **`stream_interrupted` is durable** and does have an `event_id`.
 REST rows can be normalized to `{type, ...payload, event_id: id}`, additionally
 setting `message_id: id` for input events.
 
@@ -128,6 +131,128 @@ session changes, reset paging state on fresh replay/session changes, and stop
 when `has_more` is false. Empty initial replay needs no history fetch. Page sizes
 count persisted events (including fragments, tool events, input delivery, and
 approval/question responses), not visible chat bubbles.
+
+### Model-output streaming protocol
+
+This package does **not** implement WebSocket transport, draft accumulation,
+rendering, or approval/question responses. The following shared wire contract is
+for UI consumers of the existing `/ws/sessions/{session_id}` socket; there is no
+new streaming HTTP endpoint, compatibility mode, or negotiation.
+
+Each assistant content block has an opaque `stream_id`, a `turn_id`, and a
+zero-based source-order `ordinal` within the turn. These identities are distinct
+from durable event IDs. Tool `call_id` correlates the invocation with later
+approval/question requests, not with a history cursor. A draft has a revision
+starting at zero and increasing once per published update.
+
+```json
+{"type":"stream_start","draft":{"stream_id":"s1","turn_id":"t1","ordinal":0,"revision":0,"kind":"text","text":""}}
+{"type":"stream_delta","stream_id":"s1","revision":1,"delta":"Hello"}
+{"type":"output","text":"Hello world","stream_id":"s1","turn_id":"t1","ordinal":0,"event_id":124}
+```
+
+`stream_start` may already contain content. A tool draft has `kind:"tool"`,
+`call_id`, native `name` (including MCP prefix), `arguments_json`, and
+`arguments_preview` instead of `text`:
+
+```json
+{"type":"stream_start","draft":{"stream_id":"s2","turn_id":"t1","ordinal":1,"revision":0,"kind":"tool","call_id":"c1","name":"mcp__agent_ui__message_session","arguments_json":"","arguments_preview":{}}}
+{"type":"stream_delta","stream_id":"s2","revision":1,"delta":"{\"message\":\"Hello","arguments_preview":{"message":"Hello"}}
+```
+
+Append `delta` to local text/raw argument JSON. It is a native fragment, not a
+JSON patch or result. **Replace**, never recursively merge, the provisional
+`arguments_preview` object. Missing fields and changing types are normal; clients
+must not parse partial JSON or validate previews as canonical actions. Pi RPC
+emits deltas without SDK partial snapshots. The server accumulates raw fragments
+and derives provisional argument previews with its partial parser; raw argument
+buffers do not prepend a serialization of those previews. Authoritative complete
+native events replace provisional content. Reconnect snapshots are also
+authoritative corrections to local partial content.
+
+Completed `output` and canonical `tool_use` events carry `stream_id`, `turn_id`,
+and `ordinal`; `tool_use` retains existing `call_id` and `action`. They replace
+the matching draft, not append to it, and also render standalone from history.
+Only successful persistence retires a completed draft. Historical final rows
+may omit streaming metadata and need no migration. Tool completion means only
+argument generation finished, not execution, approval, success, or delivery.
+
+#### Replay and reconciliation
+
+Under the same session lock used for live updates, initial subscription queues:
+
+1. Up to 200 newest durable events in ascending event-ID order.
+2. Exactly one frozen `stream_snapshot`, even when `drafts` is empty.
+3. `input_queue`, then `status` as the existing end-of-replay marker.
+4. Subsequent live frames through the same ordered writer.
+
+```json
+{"type":"stream_snapshot","drafts":[{"stream_id":"s1","turn_id":"t1","ordinal":0,"revision":1,"kind":"text","text":"Hello"}]}
+```
+
+The snapshot replaces the **entire** active-draft collection, separate from
+history. The replay limit is 200 durable rows **plus** drafts. Apply replay and
+snapshot before publishing the transcript at `status`. A completion race yields
+either snapshot then final, or persisted final then a snapshot without that
+draft. The next update is revision `snapshot.revision + 1`. Ignore duplicate or
+older revisions; a revision gap or unknown-draft delta requires reconnect for
+authoritative history/snapshot, not guessed state.
+
+Keep drafts keyed by `stream_id` outside durable history/IDs; never retain a token
+event log or advance pagination from transient frames. History prepend/rebuild
+must preserve current drafts and metadata without duplicating finalized blocks.
+Preserve source order, not tool-execution/completion order. UI redraws may be
+coalesced, but ordered state updates must not be dropped.
+
+#### Interruptions and questions
+
+```json
+{"type":"stream_interrupted","draft":{"stream_id":"s1","turn_id":"t1","ordinal":0,"revision":1,"kind":"text","text":"Hello"},"reason":"cancelled","event_id":125}
+{"type":"stream_remove","stream_id":"empty-placeholder"}
+```
+
+Interruption reasons are `cancelled`, `error`, `retry`, or `incomplete`. The full
+draft is preserved as durable, explicitly interrupted, non-executable output and
+replaces the local draft. Empty/whitespace placeholders can instead be cleared
+with transient `stream_remove`; substantive output must not silently disappear.
+Completed blocks remain ordinary history if subsequent generation fails. Hard
+crashes may lose unfinished drafts; there are no draft checkpoints.
+
+Question-tool argument generation now has the same read-only draft and completed
+`tool_use` lifecycle as other tools. A later persisted question includes `call_id`:
+
+```json
+{"type":"question","request_id":"q1","call_id":"c1","questions":[{"question":"Proceed?","header":"Confirm","multiSelect":false,"options":[{"label":"Yes","description":"Proceed"},{"label":"No","description":"Stop"}]}],"event_id":126}
+```
+
+Correlate it with `tool_use` by `call_id` into **one** visible card; `request_id`
+still identifies the answer interaction. Approvals already carry `call_id`.
+Only explicit validated `question`/`approval_request` events provide controls.
+Drafts, interrupted tools, and completed arguments alone never provide buttons
+or imply pending permission; auto-approval remains server policy.
+
+Messaging previews display decoded `arguments_preview.message` as plain text,
+resolving the target only when `session_id` exists. Partial messaging is visible
+only in the sender session. Recipient submission remains complete, atomic,
+validated and approved under existing policy; denial creates no recipient input,
+and busy-recipient queueing is unchanged. No speculative execution or delivery
+receipts are introduced.
+
+#### Python payload types and HTTP history
+
+`TextDraft`, `ToolDraft`, and their `StreamDraft` union describe accumulated
+content, including the draft inside durable `StreamInterruptedPayload`.
+`OutputPayload` and `ToolUsePayload` expose optional `FinalStreamMetadata` for
+historical rows; new streamed finals include all three identity/order fields.
+`QuestionPayload` describes current requests with required `call_id` (older rows
+may lack it). Payload types do not include WebSocket `type`/`event_id` envelopes.
+They are typing aids, not runtime validators or canonical action translators;
+`ScrollbackEvent.payload` remains open for other existing event types.
+
+`get_scrollback`/`read_session` return server dictionaries unchanged: final
+metadata and durable interruptions paginate normally, but starts/deltas/snapshots/
+removals and active drafts never appear. No client-side filtering, waiting,
+aggregation, retries, or compatibility conversion is added.
 
 Live session events, WebSocket replay, file trees, approval responses, and
 question answers remain outside this client's scope.
