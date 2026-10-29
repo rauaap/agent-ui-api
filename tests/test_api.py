@@ -14,6 +14,7 @@ from agent_ui_api import (
     SandboxNetworkDestination,
     SandboxNetworkSettings,
     SandboxNetworkUpdate,
+    ServerSettings,
     request,
 )
 
@@ -118,6 +119,35 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(updated["method"], "PATCH")
         self.assertEqual(updated["path"], "/shared-asset-roots/a%2Fb%20%3F%23%25%C3%BC")
         self.assertEqual(updated["body"], {"asset_root": "research", "project_id": None})
+
+    def test_settings_wire_payloads(self):
+        client = Client(self.url, "test-token")
+        result = client.get_settings()
+        self.assertEqual(result["method"], "GET")
+        self.assertEqual(result["path"], "/settings")
+        self.assertIsNone(result["body"])
+        for kwargs, expected in (
+            ({}, {}),
+            ({"worktree_path_template": "  %P/%N-%B  "},
+             {"worktree_path_template": "  %P/%N-%B  "}),
+            ({"worktree_path_template": None}, {"worktree_path_template": None}),
+            ({"default_working_directory": "  /srv/projects/  "},
+             {"default_working_directory": "  /srv/projects/  "}),
+            ({"default_working_directory": None}, {"default_working_directory": None}),
+            ({"default_agent": None}, {"default_agent": None}),
+            ({"default_agent": "  pi  "}, {"default_agent": "  pi  "}),
+            ({"default_agent": "claude-code"}, {"default_agent": "claude-code"}),
+            ({"worktree_path_template": "%P/%B", "default_working_directory": "/p/",
+              "default_agent": "pi"},
+             {"worktree_path_template": "%P/%B", "default_working_directory": "/p/",
+              "default_agent": "pi"}),
+        ):
+            with self.subTest(kwargs=kwargs):
+                result = client.update_settings(**kwargs)
+                self.assertEqual(result["method"], "PATCH")
+                self.assertEqual(result["path"], "/settings")
+                self.assertEqual(result["authorization"], "Bearer test-token")
+                self.assertEqual(result["body"], expected)
 
     def test_empty_response(self):
         self.assertIsNone(self.call("/empty"))
@@ -615,6 +645,79 @@ class ClientTests(unittest.TestCase):
                     method(*args)
                 self.assertIs(caught.exception, error)
                 transport.assert_called_once()
+
+    def test_settings_returns_fresh_server_responses(self):
+        self.assertEqual(
+            ServerSettings.__required_keys__,
+            {"worktree_path_template", "default_working_directory", "default_agent"},
+        )
+        client = Client("http://server", "secret")
+        first = {
+            "worktree_path_template": "%P/%N-%B",
+            "default_working_directory": "/projects/",
+            "default_agent": None,
+        }
+        second = {
+            "worktree_path_template": "%P/custom/%B",
+            "default_working_directory": "/srv/projects/",
+            "default_agent": "pi",
+        }
+        with patch.object(client, "request", side_effect=[first, second, second]) as call:
+            self.assertIs(client.get_settings(), first)
+            self.assertIs(client.get_settings(), second)
+            self.assertIs(
+                client.update_settings(worktree_path_template="  %P/custom/%B  "),
+                second,
+            )
+            self.assertEqual(call.call_count, 3)
+            call.assert_called_with(
+                "PATCH", "/settings",
+                body={"worktree_path_template": "  %P/custom/%B  "},
+            )
+
+    def test_settings_clear_agent_returns_full_response(self):
+        client = Client("http://server", "secret")
+        settings = {
+            "worktree_path_template": "%P/%N-%B",
+            "default_working_directory": "/projects/",
+            "default_agent": None,
+        }
+        with patch.object(client, "request", return_value=settings) as call:
+            self.assertIs(client.update_settings(default_agent=None), settings)
+            call.assert_called_once_with(
+                "PATCH", "/settings", body={"default_agent": None}
+            )
+
+    def test_settings_errors_propagate_without_fallback_or_retry(self):
+        client = Client("http://server", "secret")
+        for error in (
+            HTTPError("http://server/settings", 401, "unauthorized", {}, None),
+            HTTPError("http://server/settings", 422, "invalid", {}, None),
+            URLError("offline"),
+        ):
+            for method, kwargs in (
+                (client.get_settings, {}),
+                (client.update_settings, {}),
+                (client.update_settings, {"worktree_path_template": None}),
+                (client.update_settings, {"worktree_path_template": "  "}),
+                (client.update_settings, {"worktree_path_template": 123}),
+                (client.update_settings, {"default_working_directory": None}),
+                (client.update_settings, {"default_working_directory": "  "}),
+                (client.update_settings, {"default_working_directory": 123}),
+                (client.update_settings, {"default_agent": "unknown"}),
+                (client.update_settings, {"default_agent": "  "}),
+                (client.update_settings, {"default_agent": 123}),
+            ):
+                with (
+                    self.subTest(error=error, method=method.__name__, kwargs=kwargs),
+                    patch.object(client, "request", side_effect=error) as call,
+                    self.assertRaises(type(error)) as caught,
+                ):
+                    method(**kwargs)
+                self.assertIs(caught.exception, error)
+                call.assert_called_once()
+                if method == client.update_settings:
+                    call.assert_called_with("PATCH", "/settings", body=kwargs)
 
     def test_token_not_in_repr(self):
         self.assertNotIn("secret", repr(Client("http://server", "secret")))

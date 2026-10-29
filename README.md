@@ -58,6 +58,7 @@ messages remain subject to server busy checks.
 - Agents and model catalogs: `list_agents`
 - Images: `upload_image`, `download_image`
 - Usage: `get_usage`
+- Server preferences: `get_settings`, `update_settings`
 - Global sandbox paths: `get_sandbox_paths`, `update_sandbox_paths`
 - Global sandbox TCP exceptions: `get_sandbox_network`, `update_sandbox_network`
 - Shared assets: `list_shared_asset_roots`, `create_shared_asset_root`,
@@ -71,7 +72,8 @@ messages remain subject to server busy checks.
 - Raw REST: `request` (standalone or on `Client`)
 
 Wrappers return the server's JSON dictionaries/lists directly. Optional arguments
-of `None` are omitted; `False` and empty lists are sent. Server defaults and
+of `None` are omitted (except explicit settings values and shared-asset
+`project_id`); `False` and empty lists are sent. Server defaults and
 validation remain authoritative. Paths refer to the **server's** filesystem.
 
 `start_turn` and `start_bash` return acceptance, not completion or output.
@@ -84,6 +86,40 @@ page = client.get_scrollback(session["id"], after=cursor, limit=200)
 messages = page["messages"]
 cursor = page["next_cursor"]  # Use as after on the next read.
 ```
+
+### Server settings
+
+```python
+settings = client.get_settings()
+settings = client.update_settings(
+    worktree_path_template="%P/worktrees/%N-%B",
+    default_working_directory="/srv/projects/",
+    default_agent="pi",
+)
+settings = client.update_settings(default_agent=None)  # Clear the agent preference.
+```
+
+Both methods return the full server settings object (`ServerSettings`). Server
+defaults are `worktree_path_template="%P/%N-%B"`,
+`default_working_directory="/projects/"`, and `default_agent=None`. The client does
+not supply defaults, cache settings, or fall back on errors. Fetch settings when
+opening settings or creation forms; save edits through `update_settings`.
+
+Omitted fields stay unchanged; `update_settings()` sends an empty PATCH. Explicit
+`None` sends null, clearing `default_agent` to use the default from `list_agents`.
+The server requires nonblank strings for the template and directory, and a
+registered agent ID (`pi` or `claude-code`) or null for the agent. It trims strings
+and rejects invalid values and unknown fields with HTTP 422. Template text is
+stored without expansion or token validation; saving a directory neither creates
+it nor checks its existence. Errors propagate unchanged. Use raw `client.request`
+for fields not exposed by the wrapper.
+
+The consuming application uses the directory to seed new project paths and the
+agent to seed new session selections. This client never applies these preferences
+to project/session creation requests or overrides explicit choices.
+
+Template expansion belongs to the consuming application. `create_worktree` is
+unchanged: submit the expanded absolute `path`, `project_path`, and `branch`.
 
 ### Transcript history pagination
 

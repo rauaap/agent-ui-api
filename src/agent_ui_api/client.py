@@ -8,6 +8,14 @@ from urllib.parse import quote
 from .request import request
 
 
+class ServerSettings(TypedDict):
+    """Server-owned preferences; template text is not expanded by the server."""
+
+    worktree_path_template: str
+    default_working_directory: str
+    default_agent: str | None
+
+
 class SharedAssetRoot(TypedDict):
     """Registered server directory; ``url`` is server-relative, not absolute."""
 
@@ -191,6 +199,7 @@ class Client:
     Responses are the server's decoded JSON, without domain-model conversion.
     Optional fields set to None are omitted, leaving defaults to the server,
     except shared-asset project_id: explicit None makes the root global.
+    Settings updates also preserve explicit None for server validation.
     """
 
     base_url: str
@@ -275,6 +284,35 @@ class Client:
 
     def get_usage(self) -> dict[str, Any]:
         return self.request("GET", "/usage")
+
+    def get_settings(self) -> ServerSettings:
+        """Read current server preferences without caching or local defaults."""
+        return self.request("GET", "/settings")
+
+    def update_settings(
+        self,
+        *,
+        worktree_path_template: str | None | _Unset = _Unset.VALUE,
+        default_working_directory: str | None | _Unset = _Unset.VALUE,
+        default_agent: str | None | _Unset = _Unset.VALUE,
+    ) -> ServerSettings:
+        """Update supplied preferences and return the full server settings.
+
+        Omitted fields stay unchanged. Explicit None is sent as null: it clears
+        default_agent, but is rejected for the template and directory. Validation
+        and trimming belong to the server; this client does not expand templates
+        or apply preferences to creation requests.
+        """
+        body = {
+            key: value
+            for key, value in {
+                "worktree_path_template": worktree_path_template,
+                "default_working_directory": default_working_directory,
+                "default_agent": default_agent,
+            }.items()
+            if value is not _Unset.VALUE
+        }
+        return self.request("PATCH", "/settings", body=body)
 
     def get_sandbox_paths(self) -> dict[str, Any]:
         return self.request("GET", "/sandbox-paths")
